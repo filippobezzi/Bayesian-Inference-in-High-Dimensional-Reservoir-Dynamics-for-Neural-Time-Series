@@ -2,7 +2,7 @@ import pyro
 import torch
 import numpy as np
 
-def model(S, Y=None):
+def model(S, Y=None, beta_params=[0,10.], sigma_params=[0,10.]):
 
     rows, cols = S.shape
 
@@ -12,19 +12,19 @@ def model(S, Y=None):
     beta = pyro.sample(
         "beta",
         pyro.distributions.Normal(
-            torch.tensor(0.0, dtype=torch.float64),
-            torch.tensor(10.0, dtype=torch.float64)
+            torch.tensor(beta_params[0], dtype=torch.float64),
+            torch.tensor(beta_params[1], dtype=torch.float64)
         ).expand([cols]).to_event(1)
     )
     sigma = pyro.sample(
         "sigma",
         pyro.distributions.Uniform(
-            torch.tensor(0.0, dtype=torch.float64),
-            torch.tensor(10.0, dtype=torch.float64)
+            torch.tensor(sigma_params[0], dtype=torch.float64),
+            torch.tensor(sigma_params[1], dtype=torch.float64)
         )
     )
     
-    mu = beta @ S.mT
+    mu = torch.matmul(beta, S.mT)
 
     with pyro.plate("data", rows):
         pyro.sample(
