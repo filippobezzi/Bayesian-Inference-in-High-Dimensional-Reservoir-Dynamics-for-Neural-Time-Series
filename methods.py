@@ -1,6 +1,7 @@
 import pyro
 import torch
 import numpy as np
+import pandas as pd
 
 def model(S, Y=None, beta_params=[0,10.], sigma_params=[0,10.]):
 
@@ -81,3 +82,16 @@ def evaluate_metrics(y_pred_samples, y_true, coverage_prob=0.95, k_levels=[0.025
     mean_crps = torch.stack(crps_vals).mean().item()
 
     return ecov, cal, mean_crps
+
+def quantify_tradeoff(constraints, metrics):
+    results = pd.DataFrame({
+        "Regime": constraints,
+        "Empirical Coverage": metrics[0,:],
+        "Calibration Error": metrics[1,:],
+        "mCRPS": metrics[2,:]
+    })
+    
+    i = constraints.index([0,1e1])
+    results["Sharpness Degradation"] = [ ( metrics[2,i]-metrics[2,_] ).item() for _ in range(len(constraints))]
+    #print(results.to_markdown(index=False))
+    return results
