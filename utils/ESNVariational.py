@@ -1,0 +1,67 @@
+import torch
+from Reservoir import Reservoir
+from pyro.infer import SVI, Trace_ELBO
+from pyro.infer import Predictive
+from tqdm import tqdm
+
+
+
+class ESNVariational:
+    def __init__(self, N, K, pyro_model, pyro_guide, optimizer, spectral_radius = 0.9):
+        
+        # constructor attributes
+        self.reservoir = Reservoir(N,K,spectral_radius=spectral_radius)
+        self.pyro_model = pyro_model
+        self.pyro_guide = pyro_guide
+        self.optimizer = optimizer
+        self.svi = SVI(self.pyro_model,self.pyro_guide,self.optimizer,loss = Trace_ELBO())
+
+        # storage for Metrics
+        self.loss_history = []
+
+    def train(self, train_loader, epochs=500):
+        """
+        Training using a PyTorch DataLoader for mini-batch SVI.
+        train_loader: Should yield (batch_states, batch_targets)
+        """
+        pbar = tqdm(range(epochs), desc="Training Pyro ESN")
+        
+        # Determine total dataset size for averaging loss
+        dataset_size = len(train_loader.dataset)
+
+        for epoch in pbar:
+            epoch_loss = 0.0
+            
+            # Iterate over mini-batches
+            for batch_states, batch_targets in train_loader:
+                # SVI.step updates parameters based on this specific batch
+                # It returns the ELBO loss for the batch
+                loss = self.svi.step(batch_states, batch_targets)
+                epoch_loss += loss
+            
+            # Normalize loss by the total number of samples in the dataset
+            avg_epoch_loss = epoch_loss / dataset_size
+            self.loss_history.append(avg_epoch_loss)
+            
+            # Update progress bar every epoch, print details every 100
+            if epoch % 100 == 0:
+                print(f"Epoch {epoch} | Total ELBO Loss: {avg_epoch_loss:.4f}")
+            
+            pbar.set_postfix({"Loss": f"{avg_epoch_loss:.4f}"})
+        
+        return self.loss_history
+
+    # evaluation
+    def predict(self, test_states, num_samples = 1000):
+        """
+        Generate ''num_samples'' independent predictions for each state given the learned weights
+        """
+        predictive_object = Predictive(self.pyro_model, guide = self.pyro_guide, num_samples = num_samples)
+        with torch.no_grad():
+            samples = predictive_object(test_states, None) # None --> sampling mode, not inference
+        
+        y_samples = samples["obs"]
+        # Squeeze in case Pyro returns [Samples, 1, Time] instead of [Samples, Time]
+        return y_samples.squeeze()
+
+        
