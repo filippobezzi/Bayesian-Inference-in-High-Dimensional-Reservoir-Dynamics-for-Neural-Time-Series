@@ -1,5 +1,5 @@
-from Reservoir import Reservoir
-from ESNDataset import ESNDataset
+from utils.Reservoir import Reservoir
+from utils.ESNDataset import ESNDataset
 import torch
 
 def construct_dataset(reservoir: Reservoir, time_series, burnin = 50, train_split = 0.7, print_stats = False):

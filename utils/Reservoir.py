@@ -30,7 +30,7 @@ class Reservoir(nn.Module):
         # Internal state (Initialized to zeros)
         self.register_buffer('states', torch.zeros(1, N))
         
-        self.activation = torch.tanh
+        self.activation = nn.ReLU()
 
     def forward(self, x, y = None):
         """

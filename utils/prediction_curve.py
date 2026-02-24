@@ -1,5 +1,5 @@
-from ESNDataset import ESNDataset
-from ESNVariational import ESNVariational
+from utils.ESNDataset import ESNDataset
+from utils.ESNVariational import ESNVariational
 import torch
 import matplotlib.pyplot as plt
 
@@ -14,7 +14,7 @@ def prediction_curve(esnvariational_object: ESNVariational, test_dataset: ESNDat
         y_samples = (y_samples * s) + m
         y_true = (y_true * s) + m
 
-    mean_pred = y_samples.mean(dim=0)
+    mean_pred = y_samples.median(dim=0).values
     lower_bound = torch.quantile(y_samples, 0.025, dim=0) # 95% CI Lower
     upper_bound = torch.quantile(y_samples, 0.975, dim=0) # 95% CI Upper
 
@@ -33,6 +33,6 @@ def prediction_curve(esnvariational_object: ESNVariational, test_dataset: ESNDat
     plt.legend()
     plt.show()
 
-    return y_true, mean_pred, lower_bound, upper_bound
+    return y_true, y_samples, mean_pred, lower_bound, upper_bound
 
 

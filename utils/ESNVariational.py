@@ -1,5 +1,5 @@
 import torch
-from Reservoir import Reservoir
+from utils.Reservoir import Reservoir
 from pyro.infer import SVI, Trace_ELBO
 from pyro.infer import Predictive
 from tqdm import tqdm
