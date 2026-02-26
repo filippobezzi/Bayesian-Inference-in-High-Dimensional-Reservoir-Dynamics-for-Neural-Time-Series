@@ -2,44 +2,55 @@ from utils.Reservoir import Reservoir
 from utils.ESNDataset import ESNDataset
 import torch
 
-def construct_dataset(reservoir: Reservoir, time_series, burnin = 50, train_split = 0.7, print_stats = False):
+def construct_dataset(reservoir: Reservoir, time_series: torch.Tensor, external_mean = None, external_std = None, burnin=50, train_split=0.7, print_stats=False):
     """
-    Function that takes as input a time series and gives a torch.utils.dataset object to 
-    perform the training/testing
+    Standardizes input data, computes Reservoir states, and aligns them 
+    with future targets for multi-region brain activity prediction.
     """
-    # Compute states for each input data
-    L = len(time_series) 
+    L = len(time_series)
     reservoir.reset_state(batch_size=1)
 
-    states = torch.zeros(L,reservoir.N)
+    if (external_mean is None) or (external_std is None):
+        # We use dim=0 to get a mean and std for each of the 119 regions
+        mu = time_series.mean(dim=0)
+        std = time_series.std(dim=0)
+    else:
+        mu = external_mean
+        std = external_std
+    # Avoid division by zero
+    std_safe = std + 1e-8
+
+    # This prevents reservoir explosion and keeps inputs in the optimal range
+    time_series_scaled = (time_series - mu) / std_safe
+
+    states = torch.zeros(L, reservoir.N)
     for t in range(L):
-        sample = reservoir(time_series[t])
+        # We use unsqueeze(0) to ensure the shape is [1, 119] for the reservoir
+        sample = reservoir(time_series_scaled[t].unsqueeze(0))
         with torch.no_grad():
-            states[t] = sample
+            states[t] = sample.squeeze(0)
     
-    # Exclude burn_in to avoid dependence from initial input
+    # We use state at time 't' to predict the scaled target at time 't+1'
     cleaned_states = states[burnin:-1]
-    cleaned_time_series = time_series[burnin+1:]
+    cleaned_targets_scaled = time_series_scaled[burnin+1:]
 
-    # Calculate split index
-    split_index = int(L * train_split)
+    # Use the length of the cleaned data for the split index
+    num_samples = len(cleaned_states)
+    split_index = int(num_samples * train_split)
 
-    # Divide training and test
-    train_data_raw = cleaned_time_series[:split_index].view(-1)
-    train_states_raw = cleaned_states[:split_index]
+    train_states = cleaned_states[:split_index]
+    train_targets = cleaned_targets_scaled[:split_index]
 
-    test_data_raw = cleaned_time_series[split_index:].view(-1)
-    test_states_raw = cleaned_states[split_index:]
-
-    # compute mean and variance for training as control
-    mu = train_data_raw.mean()
-    sigma = train_data_raw.std()
+    test_states = cleaned_states[split_index:]
+    test_targets = cleaned_targets_scaled[split_index:]
     
     if print_stats:
-        print(f"Mean targets = {mu:.4f}")
-        print(f"Std targets = {sigma:.4f}")
+        # Check that we have 119 distinct means/stds
+        print(f"Stats computed for {mu.shape[0]} regions.")
+        print(f"Train targets shape: {train_targets.shape}")
 
-    train_data = ESNDataset(train_states_raw, train_data_raw, mu, sigma)
-    test_data = ESNDataset(test_states_raw, test_data_raw, mu, sigma)   
+    # We pass the per-region mu and std so the plot function can 'un-scale' later
+    train_data = ESNDataset(train_states, train_targets, mu, std)
+    test_data = ESNDataset(test_states, test_targets, mu, std)   
 
-    return train_data, test_data 
+    return train_data, test_data

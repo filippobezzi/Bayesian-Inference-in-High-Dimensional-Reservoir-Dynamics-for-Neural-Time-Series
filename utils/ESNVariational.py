@@ -7,13 +7,14 @@ from tqdm import tqdm
 
 
 class ESNVariational:
-    def __init__(self, N, K, pyro_model, pyro_guide, optimizer, spectral_radius = 0.9):
+    def __init__(self, N, K, pyro_model, pyro_guide, optimizer, spectral_radius = 0.9, scale = 0.1):
         
         # constructor attributes
         self.reservoir = Reservoir(N,K,spectral_radius=spectral_radius)
         self.pyro_model = pyro_model
         self.pyro_guide = pyro_guide
         self.optimizer = optimizer
+        self.scale = scale
         self.svi = SVI(self.pyro_model,self.pyro_guide,self.optimizer,loss = Trace_ELBO())
 
         # storage for Metrics
@@ -36,7 +37,7 @@ class ESNVariational:
             for batch_states, batch_targets in train_loader:
                 # SVI.step updates parameters based on this specific batch
                 # It returns the ELBO loss for the batch
-                loss = self.svi.step(batch_states, batch_targets)
+                loss = self.svi.step(batch_states, self.scale ,batch_targets)
                 epoch_loss += loss
             
             # Normalize loss by the total number of samples in the dataset
@@ -58,7 +59,7 @@ class ESNVariational:
         """
         predictive_object = Predictive(self.pyro_model, guide = self.pyro_guide, num_samples = num_samples)
         with torch.no_grad():
-            samples = predictive_object(test_states, None) # None --> sampling mode, not inference
+            samples = predictive_object(test_states, self.scale, None) # None --> sampling mode, not inference
         
         y_samples = samples["obs"]
         # Squeeze in case Pyro returns [Samples, 1, Time] instead of [Samples, Time]

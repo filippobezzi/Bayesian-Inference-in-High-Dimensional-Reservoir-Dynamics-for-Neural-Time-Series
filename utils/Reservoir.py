@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class Reservoir(nn.Module):
-    def __init__(self, N, K, spectral_radius=0.9):
+    def __init__(self, N, K, activation = nn.Tanh(), spectral_radius=0.9):
         super(Reservoir, self).__init__()
         
         self.N = N  # Number of reservoir neurons
@@ -30,7 +30,7 @@ class Reservoir(nn.Module):
         # Internal state (Initialized to zeros)
         self.register_buffer('states', torch.zeros(1, N))
         
-        self.activation = nn.ReLU()
+        self.activation = activation
 
     def forward(self, x, y = None):
         """
