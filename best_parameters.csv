@@ -1,0 +1,10 @@
+parameter,value
+neurons,32
+activation,Tanh()
+lr,0.0001
+spectral_radius,0.1
+scale,1.0
+ecov,0.9400072693824768
+cal,0.0009527495712973177
+avg_mcrps,0.10148470848798752
+ecov_dist,0.009992730617523149
