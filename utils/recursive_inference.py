@@ -7,7 +7,7 @@ def recursive_inference(esn_var, valid_ds, start_at_step=50, total_steps=150, nu
     and then switching to recursive for the remaining "total_steps - start_at_step" steps
     """
     device = valid_ds.predictions.device
-    mu, std = valid_ds.mean.to(device), valid_ds.std.to(device)
+    #mu, std = valid_ds.mean.to(device), valid_ds.std.to(device)
     
     # get to the correct state
     with torch.no_grad():
@@ -44,8 +44,8 @@ def recursive_inference(esn_var, valid_ds, start_at_step=50, total_steps=150, nu
             # save prediction
             y_samples[:, i, :] = y_next_samples
 
-            feedback_scaled = (y_next_mean - mu) / (std + 1e-8)
-            esn_var.reservoir.forward(feedback_scaled)
+            #feedback_scaled = (y_next_mean - mu) / (std + 1e-8)
+            esn_var.reservoir.forward(y_next_mean)
             
             if i % 10 == 0:
                 print(f"Step {t}")
