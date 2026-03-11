@@ -31,8 +31,12 @@ def construct_dataset(reservoir: Reservoir, time_series: torch.Tensor, external_
             states[t] = sample.squeeze(0)
     
     # We use state at time 't' to predict the scaled target at time 't+1'
-    cleaned_states = states[burnin:-1]
-    cleaned_targets_scaled = time_series_scaled[burnin+1:]
+    if burnin == 0:
+        cleaned_states = states[:-1]
+        cleaned_targets_scaled = time_series_scaled[1:]
+    else:
+        cleaned_states = states[burnin-1:-1]
+        cleaned_targets_scaled = time_series_scaled[burnin:]
 
     # Use the length of the cleaned data for the split index
     num_samples = len(cleaned_states)

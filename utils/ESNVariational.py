@@ -4,8 +4,6 @@ from pyro.infer import SVI, Trace_ELBO
 from pyro.infer import Predictive
 from tqdm import tqdm
 
-
-
 class ESNVariational:
     def __init__(self, N, K, pyro_model, pyro_guide, optimizer, spectral_radius = 0.9, scale = 0.1):
         
@@ -54,15 +52,8 @@ class ESNVariational:
 
     # evaluation
     def predict(self, test_states, num_samples = 1000):
-        """
-        Generate ''num_samples'' independent predictions for each state given the learned weights
-        """
         predictive_object = Predictive(self.pyro_model, guide = self.pyro_guide, num_samples = num_samples)
         with torch.no_grad():
-            samples = predictive_object(test_states, self.scale, None) # None --> sampling mode, not inference
-        
+            samples = predictive_object(test_states, self.scale, None)
         y_samples = samples["obs"]
-        # Squeeze in case Pyro returns [Samples, 1, Time] instead of [Samples, Time]
         return y_samples.squeeze()
-
-        

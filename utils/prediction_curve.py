@@ -11,25 +11,22 @@ def prediction_curve(esnvariational_object: ESNVariational,
                      plot: bool = True, 
                      region_idx: int = 0, 
                      title: str = "Predicted vs Actual Data"):
-    
-    # y_samples shape: [Num_Samples, Time, Num_Regions]
+    """
+    Function that does direct forecasting using SVI
+    """
+    # y_samples: [Num_Samples, Time, Num_Regions]
     y_samples = esnvariational_object.predict(test_states=test_dataset.states, num_samples=num_samples)
     y_true = test_dataset.predictions 
     
-    # 1. IN-PLACE RESCALING: Prevents sudden RAM doubling
+    
+    # rescale
     if scaler:
         m = scaler['mean']
         s = scaler['std']
         
-        # Modify the giant tensor by overwriting its own memory
-        y_samples.mul_(s).add_(m)
-        
-        if isinstance(y_true, torch.Tensor):
-            y_true.mul_(s).add_(m)
-        else:
-            y_true = (y_true * s) + m
-
-    # 2. VECTORIZED QUANTILES: Executed in a single pass
+    y_samples = y_samples * s + m  
+    y_true = y_true * s + m        
+    
     # Define the 3 levels we need: [2.5%, 50% (median), 97.5%]
     q_levels = torch.tensor([0.025, 0.5, 0.975], dtype=y_samples.dtype, device=y_samples.device)
     
@@ -55,8 +52,8 @@ def prediction_curve(esnvariational_object: ESNVariational,
             y_plot_upper = upper_bound
             label_suffix = ""
 
-        # Use 'fig' so we can explicitly close it to avoid Matplotlib memory leaks
-        fig = plt.figure(figsize=(12, 5))
+        # 'fig' so we can explicitly close it to avoid Matplotlib memory leaks
+        fig = plt.figure(figsize=(8, 5))
         
         plt.plot(y_plot_true, label=f"True Signal {label_suffix}", color="black", alpha=0.6)
         plt.plot(y_plot_mean, label="Bayesian Median", color="blue")
