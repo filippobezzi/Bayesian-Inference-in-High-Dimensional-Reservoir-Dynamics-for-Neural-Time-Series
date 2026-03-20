@@ -34,7 +34,7 @@ def model(S, Y=None, beta_params=[0,10.], sigma_params=[0,10.]):
             obs=Y,
         )
 
-def evaluate_metrics(y_pred_samples, y_true, coverage_prob=0.95, k_levels=[0.025, 0.5, 0.975]):
+def evaluate_metrics(y_pred_samples, y_true, coverage_prob=0.95, k_levels=np.linspace(0.0,1.0,int(1/0.025))):
     """
     Calculates Empirical Coverage, Calibration Error, and mCRPS strictly PER-REGION.
     Returns 1D PyTorch tensors of shape [Regions] for all three metrics.
@@ -73,6 +73,7 @@ def evaluate_metrics(y_pred_samples, y_true, coverage_prob=0.95, k_levels=[0.025
         k_coverage = (y_true <= quantile_k).float().mean(dim=0) 
         cal_per_region += (k - k_coverage)**2
 
+    cal_per_region /= len(k_levels)
     # ==========================================
     # Per-Region mCRPS (Pinball Loss)
     # ==========================================

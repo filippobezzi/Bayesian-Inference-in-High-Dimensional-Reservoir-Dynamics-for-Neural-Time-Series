@@ -1,27 +1,34 @@
 from utils.Reservoir import Reservoir
 from utils.ESNDataset import ESNDataset
 import torch
+from scipy.signal import savgol_filter
 
-def construct_dataset(reservoir: Reservoir, time_series: torch.Tensor, external_mean = None, external_std = None, burnin=50, train_split=0.7, print_stats=False):
+def construct_dataset(reservoir: Reservoir, time_series: torch.Tensor, external_mean = None, external_std = None, burnin=50, train_split=0.7, print_stats=False, noise = True):
     """
     Standardizes input data, computes Reservoir states, and aligns them 
     with future targets for multi-region brain activity prediction.
     """
     L = len(time_series)
     reservoir.reset_state(batch_size=1)
+    if noise:
+        time_series_smoothed = torch.from_numpy(savgol_filter(time_series, window_length=21, polyorder=3))
+    else:
+        time_series_smoothed = time_series
+    
 
     if (external_mean is None) or (external_std is None):
         # We use dim=0 to get a mean and std for each of the 119 regions
-        mu = time_series.mean(dim=0)
-        std = time_series.std(dim=0)
+        mu = time_series_smoothed.mean(dim=0)
+        std = time_series_smoothed.std(dim=0)
     else:
         mu = external_mean
         std = external_std
     # Avoid division by zero
     std_safe = std + 1e-8
 
+    # smooth with filter: 
     # This prevents reservoir explosion and keeps inputs in the optimal range
-    time_series_scaled = (time_series - mu) / std_safe
+    time_series_scaled = (time_series_smoothed - mu) / std_safe
 
     states = torch.zeros(L, reservoir.N)
     for t in range(L):

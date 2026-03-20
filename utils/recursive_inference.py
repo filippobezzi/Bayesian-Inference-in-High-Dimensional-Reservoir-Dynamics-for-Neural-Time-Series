@@ -1,6 +1,6 @@
 import torch
-
-def recursive_inference(esn_var, valid_ds, start_at_step=50, total_steps=150, num_samples=1000):
+from scipy.signal import savgol_filter
+def recursive_inference(esn_var, valid_ds, start_at_step=50, total_steps=150, num_samples=1000, noise = True):
     """
     Function that does recursive inference using SVI
     start_at_step can be used to "guide" initially the recursive forecasting by starting with a direct forecast
@@ -50,13 +50,21 @@ def recursive_inference(esn_var, valid_ds, start_at_step=50, total_steps=150, nu
             if i % 10 == 0:
                 print(f"Step {t}")
                 
-    # quantiles and final mean
-    y_mean = y_samples.mean(dim=0)
-    
-    q_levels = torch.tensor([0.025, 0.975], dtype=y_samples.dtype, device=y_samples.device)
-    q_vals = torch.quantile(y_samples, q_levels, dim=0)
-    
-    y_lower = q_vals[0]
-    y_upper = q_vals[1]
+        # quantiles and final mean
+        y_mean = y_samples.mean(dim=0)
+        
+        if noise:
+            # SAVITZKY-GOLAY
+            y_mean_filtered_np = savgol_filter(y_mean, window_length=21, polyorder=3)
+            y_mean_filtered = torch.from_numpy(y_mean_filtered_np).to(device)
+        else:
+            y_mean_filtered = y_mean
             
-    return y_mean, y_upper, y_lower, y_samples
+        
+        q_levels = torch.tensor([0.025, 0.975], dtype=y_samples.dtype, device=y_samples.device)
+        q_vals = torch.quantile(y_samples, q_levels, dim=0)
+        
+        y_lower = q_vals[0]
+        y_upper = q_vals[1]
+                
+    return y_mean_filtered, y_upper, y_lower, y_samples
