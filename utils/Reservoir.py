@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+from sklearn.decomposition import PCA
 from typing import Callable
 
 
@@ -40,6 +41,9 @@ class Reservoir(nn.Module):
         self._saved_states = {"default": torch.clone(self.state).detach()}
 
         self.activation = activation
+
+        # eventual PCA module, to be added later if needed
+        self.pca: PCA | None = None
         return
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -48,7 +52,8 @@ class Reservoir(nn.Module):
             x (torch.Tensor): value of the time serie at time $t$: $x_t$
 
         Returns:
-            torch.Tensor: updated state: $s_{t+1} = f(W \cdot s_{t} + W_{in} \cdot x_{t})$
+            torch.Tensor: updated state: $s_{t+1} = f(W \cdot s_{t} + W_{in} \cdot x_{t})$.
+                If `self.pca` is not `None`, then $s_{t+1}$ is first transformed by it.
         """
 
         # Linear combinations: Input effect + Reservoir recurrent effect
@@ -59,7 +64,19 @@ class Reservoir(nn.Module):
         # We .detach() to ensure we don't track gradients through time steps
         self.state = self.activation(input_part + recurrent_part).detach()
 
-        return self.state
+        return (
+            torch.Tensor(self.pca.transform(self.state.numpy()))
+            if self.pca is not None
+            else self.state
+        )
+
+    def add_pca_module(self, pca: PCA) -> None:
+        """
+        From now on, all outputs of `forward` will be transformed through `pca` (already fitted).
+        The internal update of `state` is unchanged.
+        """
+        self.pca = pca
+        return
 
     def reset_state(self, batch_size=1) -> None:
         """Clears the memory of the reservoir."""

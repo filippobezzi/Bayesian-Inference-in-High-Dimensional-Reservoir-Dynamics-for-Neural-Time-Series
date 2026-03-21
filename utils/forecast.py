@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 
 from pyro.infer import Predictive
+from typing import Callable
 
 from utils.Reservoir import Reservoir
 

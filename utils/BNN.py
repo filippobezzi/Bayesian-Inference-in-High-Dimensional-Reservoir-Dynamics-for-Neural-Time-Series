@@ -43,10 +43,10 @@ class BayesianNeuralNetwork(PyroModule):
             input_dim = layer_sizes[i]
             output_dim = layer_sizes[i + 1]
             layer.weight = PyroSample(
-                dist.Normal(0, 10).expand([output_dim, input_dim]).to_event(0)  # 2
+                dist.Normal(0, 3).expand([output_dim, input_dim]).to_event(2)  # 2
             )
             layer.bias = PyroSample(
-                dist.Normal(0, 10).expand([output_dim]).to_event(0)  # 1
+                dist.Normal(0, 1).expand([output_dim]).to_event(1)  # 1
             )
 
         return
@@ -58,10 +58,10 @@ class BayesianNeuralNetwork(PyroModule):
 
         sigma = pyro.sample(
             "sigma",
-            dist.Gamma(1, 1).expand([mu.shape[1]]).to_event(0),  # 1
-        )  # [n_features, n_features]
+            # dist.Gamma(1, 1).expand([mu.shape[1]]).to_event(1),  # 1
+            dist.HalfNormal(1).expand([mu.shape[1]]).to_event(1),  # 1
+        )  # [n_features]
         with pyro.plate("data", mu.shape[0]):
-            # obs_target = y.view(-1) if y is not None else None
             obs = pyro.sample("obs", dist.Normal(mu, sigma**2).to_event(1), obs=y)
 
         return mu
