@@ -1,249 +1,241 @@
 import numpy as np
+import torch
 import pandas as pd
 
 import matplotlib.pyplot as plt
-from matplotlib.path import Path
-import matplotlib.patches as patches
-from matplotlib.ticker import MaxNLocator
-import seaborn as sns
 
 from sklearn.decomposition import PCA
+from sklearn.isotonic import IsotonicRegression
 
+################### DATA ###################
+def partition_states(S, Y, block_size=200, buffer_size=20):
+    S_blocks, Y_blocks = [], []
+    start_idx = 0
+    while start_idx + block_size <= S.shape[0]:
+        end_idx = start_idx + block_size
+        S_blocks.append(S[start_idx:end_idx])
+        Y_blocks.append(Y[start_idx:end_idx])
+        start_idx = end_idx + buffer_size
+    return S_blocks, Y_blocks
 
-class Reservoir:
-    def __init__(self, input_dim, reservoir_dim, spectral_radius, seed=None):
-        self.input_dim = input_dim
-        self.reservoir_dim = reservoir_dim
-        self.spectral_radius = spectral_radius
-        self.seed = seed
-        self.w_init()
+def z_rescale_tensor(X_tensor, mean, std):
+    mean_t = torch.tensor(mean, dtype=X_tensor.dtype)
+    std_t = torch.tensor(std, dtype=X_tensor.dtype)
+    return (X_tensor * std_t) + mean_t
 
-    def w_init( self ):
-        if self.seed is not None:
-            np.random.seed(self.seed)
+################### RC ###################
+def get_reduced_states(Reservoir, X, n_components):
+    """
+    Applies dimensionality reduction (PCA) to the reservoir's RNN neurons.
 
-        W = np.random.uniform( -1, 1, (self.reservoir_dim, self.reservoir_dim) ) 
-        eigvals_res = np.linalg.eigvals( W )
-        max_radius = np.max( np.abs( eigvals_res ) ) 
-        self.W = W * self.spectral_radius / max_radius
-        self.W_in = np.random.uniform( -1, 1, (self.reservoir_dim, self.input_dim) )
+    Args:
+        Reservoir (Class): Methods to operate on the states of the reservoir computer
+        X_train (NumpyArray): shape [T_train, 1]
+        X_test (NumpyArray): [T_test, 1]
+        n_components (int): Number of reduced components 
 
-    def get_states(self, X):
-        Time_steps = X.shape[0]
-        states = np.zeros( (Time_steps, self.reservoir_dim) )
-        s_prev = np.zeros( (1, self.reservoir_dim) )
-
-        for t in range(Time_steps):
-            x_t = X[t, :]
-            # if t==0: print(self.W_in.shape, x_t.shape, s_prev.shape, self.W.shape)  # debug
-            s_curr = np.tanh(self.W_in @ x_t + s_prev @ self.W )
-            states[t,:] = s_curr
-            s_prev = s_curr
-
-        return states
-
-class DataGenerator:
-    def __init__(self, Time_steps, tau, n, beta, gamma, delta_t, init_steps=500 , under_samp=10):
-        self.Time_steps = Time_steps*under_samp
-        self.under_samp = under_samp
-        self.init_steps = init_steps
-        self.beta = beta
-        self.gamma = gamma
-        self.delta_t = delta_t
-        self.tau = tau
-        self.n = n
-
-    def generate_data(self):
-        delay_steps = int(self.tau / self.delta_t)
-        total_steps = self.Time_steps + delay_steps + self.init_steps + 1
-
-        x_history = np.zeros(total_steps+1)
-        x_history[:delay_steps] = 1.2 + np.random.uniform(-0.1, 0.1, delay_steps )
-
-        for t in range(delay_steps, total_steps, 1):
-            x_past = x_history[t - delay_steps]
-            x_curr = x_history[t]
-
-            x_succ = x_curr + ( self.beta * x_past / ( 1 + x_past**self.n )- self.gamma * x_curr ) * self.delta_t
-
-            x_history[t + 1] = x_succ
-
-        skip_steps = delay_steps+self.init_steps+1
-
-        X = x_history[skip_steps:-1][::self.under_samp]
-        X = (X - np.mean(X)) / ( np.std(X) + 1e-8 )
-        Y = x_history[skip_steps+1:][::self.under_samp]
-        Y = (Y - np.mean(Y)) / ( np.std(Y) + 1e-8 )
-
-        return X.reshape((-1, 1)), Y.reshape((-1, 1))
-    
-def get_reduced_states(Reservoir, X_train, X_test, n_components):
-
-    states_train_high = Reservoir.get_states(X_train)
-    states_test_high  = Reservoir.get_states(X_test)
+    Returns:
+        states_train_low (NumpyArray): shape [n_components, R]
+        states_test_low (NumpyArray): shape [n_components, R]
+    """
+    states_high = Reservoir.get_states(X)
 
     pca = PCA(n_components=n_components)
-    pca.fit(states_train_high)
+    pca.fit(states_high)
 
-    states_train_low = pca.transform(states_train_high)
-    states_test_low  = pca.transform(states_test_high)
+    states_low = pca.transform(states_high)
 
-    print(f"Original dim: {states_train_high.shape}")
-    print(f"Reduced dim:  {states_train_low.shape}")
+    print(f"Original dim: {states_high.shape}")
+    print(f"Reduced dim:  {states_low.shape}")
     
-    return states_train_low, states_test_low
+    return states_low
 
+################### METRICS ###################
 
-class ComplexRadar():
-    def __init__(self, fig, variables, ranges, n_ring_levels=5):
-        angles = np.arange(0, 360, 360./len(variables))
-        axes = [fig.add_axes([0.1,0.1,0.9,0.9], polar=True) for _ in range(len(variables)+1)]
-        
-        for ax in axes:
-            ax.set_theta_zero_location('N')
-            ax.set_theta_direction(-1)
-            ax.set_axisbelow(True)
-        
-        for i, ax in enumerate(axes):
-            j = 0 if (i==0 or i==1) else i-1
-            ax.set_ylim(*ranges[j])
-            grid = np.linspace(*ranges[j], num=n_ring_levels, endpoint=False)
-            gridlabel = [f"{round(x,2)}" for x in grid]
-            gridlabel[0] = "" 
-            ax.set_rgrids(grid, labels=gridlabel, angle=angles[j])
-            
-            ax.spines["polar"].set_visible(False)
-            ax.grid(visible=False)
+def quantify_tradeoff(metrics_data, baseline_config="Rank 1"):
+    """
+    Groups ordered results in terms of mCRPS of a GridSearchCV in a DataFrame. 
+    It shows the difference across all results from the paramters with the best performance to assess how the parameters affect the overall performance of the model.
 
-        for ax in axes[1:]:
-            ax.patch.set_visible(False)
-            ax.xaxis.set_visible(False)
-            
-        self.angle = np.deg2rad(np.r_[angles, angles[0]])
-        self.ranges = ranges
-        self.ax = axes[0]
-        self.ax1 = axes[1]
-        
-        self.ax.yaxis.grid()
-        self.ax.xaxis.grid()
-        self.ax.spines['polar'].set_visible(True)
-        
-        self.ax1.axis('off')
-        self.ax1.set_zorder(9)
-        
-        self.ax.set_thetagrids(angles, labels=variables)
-        self.ax.tick_params(axis='both', pad=15)
-
-    def _scale_data(self, data, ranges):
-        x1, x2 = ranges[0]
-        d = data[0]
-        sdata = [d]
-        for d, (y1, y2) in zip(data[1:], ranges[1:]):
-            scale = (x2 - x1) / (y2 - y1) if y2 != y1 else 1
-            sdata.append((d - y1) * scale + x1)
-        return sdata
-        
-    def plot(self, data, *args, **kwargs):
-        sdata = self._scale_data(data, self.ranges)
-        self.ax1.plot(self.angle, np.r_[sdata, sdata[0]], *args, **kwargs)
-    
-    def fill(self, data, *args, **kwargs):
-        sdata = self._scale_data(data, self.ranges)
-        self.ax1.fill(self.angle, np.r_[sdata, sdata[0]], *args, **kwargs)
-
-    def use_legend(self, *args, **kwargs):
-        self.ax1.legend(*args, **kwargs)
-
-
-def plot_parallel_coordinates_ci(metrics_data, bounds=None, colors=None, figsize=(8, 5)):
-    """ 
     Args:
-        metrics_data (dict): Dictionary structured as:
-            {
-                'MetricName': {
-                    'ModelName': [run1, run2, run3, ...],
-                    ...
-                },
-                ...
-            }
-        bounds (ditc, optional): Sets the bounds on each metric's axis. If None, the bounds are tuned to the specific results.
-        colors (list, optional): List of colors for each model.
-        figsize (tuple, optional): Figure dimensions.
+        metrics_data (dict): {
+            "Rank 1": {"Cal": {}, "Cov": {}, "mCRPS": {}, "Width": {}}
+            "Rank 2": {"Cal": {}, "Cov": {}, "mCRPS": {}, "Width": {}}
+            ...
+            "Rank N": {"Cal": {}, "Cov": {}, "mCRPS": {}, "Width": {}}
+        }
+        baseline_config (str, optional): Defaults to "Rank 1".
+
+    Returns:
+        results (DataFrame)
     """
     metrics = list(metrics_data.keys())
     models = list(metrics_data[metrics[0]].keys())
-    n_metrics = len(metrics)
     
-    if colors is None:
-        colors = ['blue', 'orange', 'green', 'red', 'purple', 'brown']
+    results = pd.DataFrame({
+        "Configuration": models,
+        "Cov": [np.mean(metrics_data["Cov"][m]) for m in models],
+        "Cal": [np.mean(metrics_data["Cal"][m]) for m in models],
+        "mCRPS": [np.mean(metrics_data["mCRPS"][m]) for m in models],
+        "Width": [np.mean(metrics_data["Width"][m]) for m in models]
+    })
+    
+    baseline_idx = models.index(baseline_config)
+    
+    results["mCRPS (Total Degradation)"] = results["mCRPS"] - results["mCRPS"].iloc[baseline_idx]
+    results["Width (Sharpness Degradation)"] = results["Width"] - results["Width"].iloc[baseline_idx]
 
-    # Compute bounds and scaling limits
-    data_mean = {m: np.array([np.mean(metrics_data[met][m]) for met in metrics]) for m in models}
-    data_upper = {m: np.array([np.max(metrics_data[met][m]) for met in metrics]) for m in models}
-    data_lower = {m: np.array([np.min(metrics_data[met][m]) for met in metrics]) for m in models}
+    return results
 
-    if bounds is not None:
-        ymins = [bounds[met][0] for met in metrics]
-        ymaxs = [bounds[met][1] for met in metrics]
+def evaluate_metrics(y_pred_samples, y_true, cov_prob=0.95, quantiles=None):
+    if quantiles is None:
+        quantiles = np.linspace(0.05, 0.95, 19)
+
+    if not isinstance(y_true, torch.Tensor):    
+        y_true = torch.from_numpy(y_true)
+
+    if y_true.ndim == 1:
+        y_true = y_true.unsqueeze(-1)
+    if y_pred_samples.ndim == 2:
+        y_pred_samples = y_pred_samples.unsqueeze(-1)
+
+    # Convert quantiles to a PyTorch tensor
+    if not isinstance(quantiles, torch.Tensor):
+        quantiles_t = torch.tensor(quantiles, dtype=y_pred_samples.dtype, device=y_pred_samples.device)
     else:
-        ymins = [min([data_lower[m][i] for m in models]) for i in range(n_metrics)]
-        ymaxs = [max([data_upper[m][i] for m in models]) for i in range(n_metrics)]
+        quantiles_t = quantiles
 
-    # Add padding to axes
-    ymins = [y - 0.05 * (ymaxs[i] - y) if ymaxs[i] != y else y - 0.05 for i, y in enumerate(ymins)]
-    ymaxs = [y + 0.05 * (y - ymins[i]) if ymins[i] != y else y + 0.05 for i, y in enumerate(ymaxs)]
+    # ==========================================
+    # Per-Region Empirical Coverage
+    # ==========================================
+    Y_lower = torch.quantile(y_pred_samples, (1 - cov_prob) / 2, dim=0)
+    Y_upper = torch.quantile(y_pred_samples, (1 + cov_prob) / 2, dim=0)
 
-    def scale(val, i):
-        return (val - ymins[i]) / (ymaxs[i] - ymins[i])
+    # Mask shape: [Time, Regions]
+    coverage_mask = (y_true >= Y_lower) & (y_true <= Y_upper)
+    
+    # Average over Time (dim=0). Result shape: [Regions]
+    cov_per_region = coverage_mask.float().mean(dim=0)
 
-    fig, host = plt.subplots(figsize=figsize)
-    axes = [host] + [host.twinx() for _ in range(n_metrics - 1)]
-
-    # Axis superposition and scaling
-    for i, ax in enumerate(axes):
-        ax.set_ylim(ymins[i], ymaxs[i])
-
-        if metrics[i] == 'Width':
-            ax.yaxis.set_major_locator(MaxNLocator(integer=True))
-
-        ax.spines['top'].set_visible(False)
-        ax.spines['bottom'].set_visible(False)
-        if ax != host:
-            ax.spines['left'].set_visible(False)
-            ax.yaxis.set_ticks_position('right')
-            ax.spines["right"].set_position(("axes", i / (n_metrics - 1)))
-
-    host.set_xlim(0, n_metrics - 1)
-    host.set_xticks(range(n_metrics))
-    host.set_xticklabels(metrics, fontsize=12)
-    host.spines['right'].set_visible(False)
-    host.xaxis.tick_top()
-
-    lin = np.linspace(0, n_metrics - 1, n_metrics)
-
-    # Path rendering
-    for j, model in enumerate(models):
-        c = colors[j % len(colors)]
+    # ==========================================
+    # Per-Region Calibration Error
+    # ==========================================
+    num_regions = y_true.shape[1]
+    cal_per_region = torch.zeros(num_regions, device=y_true.device)
+    
+    # Handle both 1D (Global Nominal Quantiles) and 2D (Region-Adjusted Quantiles)
+    if quantiles_t.ndim == 1:
+        for q in quantiles_t:
+            # Enforce native float via .item()
+            quantile_vals = torch.quantile(y_pred_samples, q.item(), dim=0)   
+            q_coverage = (y_true <= quantile_vals).float().mean(dim=0)     
+            cal_per_region += (q - q_coverage)**2
         
-        scaled_lower = np.array([scale(data_lower[model][i], i) for i in range(n_metrics)])
-        scaled_upper = np.array([scale(data_upper[model][i], i) for i in range(n_metrics)])
-        scaled_mean = np.array([scale(data_mean[model][i], i) for i in range(n_metrics)])
-
-        # Construct closed polygon for interval shading
-        verts_fill = np.concatenate([
-            np.stack([lin, scaled_upper]).T,
-            np.flip(np.stack([lin, scaled_lower]).T, axis=0),
-            [[lin[0], scaled_upper[0]]]
-        ])
-        codes_fill = [Path.MOVETO] + [Path.LINETO] * (len(verts_fill) - 1)
+        # Division MUST be outside the loop to calculate Mean Squared Calibration Error properly
+        cal_per_region /= len(quantiles_t)
         
-        patch_fill = patches.PathPatch(Path(verts_fill, codes_fill), facecolor=c, alpha=0.2, lw=0)
-        host.add_patch(patch_fill)
+    elif quantiles_t.ndim == 2:
+        num_quantiles = quantiles_t.shape[0]
+        # Evaluate Region-by-Region to handle independent quantile sequences
+        for r in range(num_regions):
+            for i in range(num_quantiles):
+                q = quantiles_t[i, r]
+                # Extract all samples and all time steps for region r
+                quantile_val = torch.quantile(y_pred_samples[:, :, r], q.item(), dim=0)
+                q_coverage = (y_true[:, r] <= quantile_val).float().mean(dim=0)
+                cal_per_region[r] += (q - q_coverage)**2
+                
+        # Division outside the loop
+        cal_per_region /= num_quantiles
 
-        # Construct mean line
-        verts_mean = np.stack([lin, scaled_mean]).T
-        host.plot(verts_mean[:, 0], verts_mean[:, 1], color=c, lw=2, label=model)
+    # ==========================================
+    # Per-Region mCRPS
+    # ==========================================
+    tau_grid = torch.linspace(0.0, 1.0, 101, dtype=y_pred_samples.dtype, device=y_pred_samples.device)
+    q_mcrps = torch.quantile(y_pred_samples, tau_grid, dim=0)
+    
+    y_true_extended = y_true.unsqueeze(0)
+    errors = y_true_extended - q_mcrps  
+    
+    tau_grid_extended = tau_grid.view(-1, 1, 1)
+    loss = torch.max(tau_grid_extended * errors, (tau_grid_extended - 1) * errors)
+    
+    mcrps_per_region = 2 * loss.mean(dim=[0, 1])
 
-    host.legend(loc='lower center', bbox_to_anchor=(0.5, -0.15), ncol=len(models))
-    plt.tight_layout()
-    plt.show()
+    # ==========================================
+    # Per-Region Width
+    # ==========================================
+    width_per_region = (Y_upper - Y_lower).mean(dim=0)
+
+    return cov_per_region, cal_per_region, mcrps_per_region, width_per_region
+
+def check_calibration(q, Y, quantiles):
+    """
+    Evaluates the calibration error and empirical CDF.
+    Args:
+        q: Quantile matrix of shape [Quantiles, TimeSteps, Regions]
+        Y: Ground truth of shape [TimeSteps, Regions]
+        quantiles: Target quantiles of shape [Quantiles]
+    """
+    # Y is broadcasted against q. Resulting mask shape: [Quantiles, TimeSteps, Regions]
+    coverage_mask = Y <= q
+    
+    # Average over TimeSteps to isolate per-region empirical CDF. Shape: [Quantiles, Regions]
+    predicted_cdf = np.mean(coverage_mask, axis=1)
+    
+    # Compute error per region. Shape: [Regions]
+    cal_error = np.mean((predicted_cdf - quantiles[:, None])**2, axis=0)
+    
+    return cal_error, predicted_cdf
+
+def calibrate(y_pred_test, y_pred_val, Y_test, Y_val, quantiles=None, plot_region=0):
+    """
+    Fits Isotonic Regression on the validation dataset and maps the test dataset quantiles.
+    """
+    if quantiles is None:
+        quantiles = np.linspace(0.01, 0.99, 99)
+        
+    regions = Y_test.shape[1]
+    
+    # Uncalibrated Test Evaluation
+    q_test_uncal = np.quantile(y_pred_test, quantiles, axis=0)
+    cal_error_uncal, cdf_test_uncal = check_calibration(q_test_uncal, Y_test, quantiles)
+    
+    # Extract Validation Empirical CDF for Fitting
+    q_val = np.quantile(y_pred_val, quantiles, axis=0)
+    _, cdf_val = check_calibration(q_val, Y_val, quantiles)
+    
+    new_quantiles_matrix = np.zeros((len(quantiles), regions))
+    cal_error_cal = np.zeros(regions)
+    cdf_test_cal = np.zeros((len(quantiles), regions))
+    
+    for r in range(regions):
+        iso = IsotonicRegression(out_of_bounds='clip')
+        
+        # Fit calibrator mapping empirical coverage to target nominal quantiles
+        iso.fit(cdf_val[:, r], quantiles)
+        
+        new_quantiles_r = iso.transform(quantiles)
+        new_quantiles_r = np.nan_to_num(new_quantiles_r, nan=0.5)
+        new_quantiles_matrix[:, r] = new_quantiles_r
+        
+        # Apply Recalibration to Test Predictive Distribution
+        new_q_test_r = np.array([np.quantile(y_pred_test[:, :, r], q, axis=0) for q in new_quantiles_r])
+        
+        cdf_test_cal[:, r] = np.mean(Y_test[:, r] <= new_q_test_r, axis=1)
+        cal_error_cal[r] = np.mean((cdf_test_cal[:, r] - quantiles)**2)
+
+    if plot_region is not None:
+        plt.figure(figsize=(6, 6))
+        plt.plot(quantiles, cdf_test_uncal[:, plot_region], '-x', color='purple', label='Uncalibrated (Test)')
+        plt.plot(quantiles, cdf_test_cal[:, plot_region], '-+', color='red', label='Calibrated (Test)')
+        plt.plot([0,1],[0,1],'--', color='grey', label='Perfect Calibration')
+        plt.xlabel('Target Quantile')
+        plt.ylabel('Empirical Coverage')
+        plt.title(f'Calibration Curve (Region {plot_region})')
+        plt.legend()
+        plt.grid(True, linestyle='--', alpha=0.6)
+        plt.tight_layout()
+        plt.show()
+
+    return cal_error_uncal, cal_error_cal, new_quantiles_matrix
