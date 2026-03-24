@@ -3,7 +3,7 @@ import numpy as np
 from torch.utils.data import Subset
 from utils.ESNDataset import ESNDataset
 
-def partition_dataset(dataset_list: list, num_partitions:10, training_frac=0.7, cal_frac=0.2, test_frac=0.1):
+def partition_dataset(dataset_list: list, num_partitions:5, training_frac=0.7, cal_frac=0.2, test_frac=0.1):
     """
     Function that, given a list of datasets, partitions each into a specified number of 
     contiguous time-series sub-blocks. These blocks are then randomly shuffled and 
