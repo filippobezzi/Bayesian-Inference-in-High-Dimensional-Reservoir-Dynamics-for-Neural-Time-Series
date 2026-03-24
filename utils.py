@@ -8,8 +8,8 @@ from sklearn.decomposition import PCA
 from sklearn.isotonic import IsotonicRegression
 
 ################### DATA ###################
-def partition_states(S, Y, block_size=200, buffer_size=0):
-    """_summary_
+def partition_states(S, Y, block_size, buffer_size=0):
+    """
 
     Args:
         S (_type_): _description_
