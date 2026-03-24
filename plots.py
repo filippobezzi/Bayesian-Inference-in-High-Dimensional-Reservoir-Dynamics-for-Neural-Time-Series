@@ -7,13 +7,14 @@ import numpy as np
 
 class ComplexRadar():
     def __init__(self, fig, variables, ranges, n_ring_levels=5):
-        """_summary_
+        """
+        Initializes a multi-axis radar chart capable of handling independent scales for each variable.
 
         Args:
-            fig (_type_): _description_
-            variables (_type_): _description_
-            ranges (_type_): _description_
-            n_ring_levels (int, optional): _description_. Defaults to 5.
+            fig (matplotlib.figure.Figure): The parent matplotlib figure object.
+            variables (list of str): The names of the metrics to be plotted on each axis.
+            ranges (list of tuple): The minimum and maximum limits for each corresponding variable.
+            n_ring_levels (int, optional): The number of concentric grid lines. Defaults to 5.
         """
         angles = np.arange(0, 360, 360./len(variables))
         axes = [fig.add_axes([0.1,0.1,0.9,0.9], polar=True) for _ in range(len(variables)+1)]
@@ -54,14 +55,15 @@ class ComplexRadar():
         self.ax.tick_params(axis='both', pad=15)
 
     def _scale_data(self, data, ranges):
-        """_summary_
+        """
+        Normalizes input data across distinct metric ranges to align with the primary radial axis.
 
         Args:
-            data (_type_): _description_
-            ranges (_type_): _description_
+            data (list of float): The raw data points matching the variables order.
+            ranges (list of tuple): The min-max bounds for scaling calculations.
 
         Returns:
-            _type_: _description_
+            list of float: The standardized data points mapped to the baseline axis scale.
         """
         x1, x2 = ranges[0]
         d = data[0]
@@ -72,41 +74,49 @@ class ComplexRadar():
         return sdata
         
     def plot(self, data, *args, **kwargs):
-        """_summary_
+        """
+        Plots a 1D array of values onto the scaled radar axes as a connecting line.
 
         Args:
-            data (_type_): _description_
+            data (list of float): The data points to map onto the radar chart.
+            *args: Standard matplotlib plot positional arguments.
+            **kwargs: Standard matplotlib plot keyword arguments.
         """
         sdata = self._scale_data(data, self.ranges)
         self.ax1.plot(self.angle, np.r_[sdata, sdata[0]], *args, **kwargs)
     
     def fill(self, data, *args, **kwargs):
-        """_summary_
+        """
+        Fills the polygonal area enclosed by the plotted data points on the radar chart.
 
         Args:
-            data (_type_): _description_
+            data (list of float): The data points defining the polygon vertices.
+            *args: Standard matplotlib fill positional arguments.
+            **kwargs: Standard matplotlib fill keyword arguments.
         """
         sdata = self._scale_data(data, self.ranges)
         self.ax1.fill(self.angle, np.r_[sdata, sdata[0]], *args, **kwargs)
 
     def use_legend(self, *args, **kwargs):
+        """
+        Binds a matplotlib legend to the internal radar axis.
+
+        Args:
+            *args: Standard matplotlib legend positional arguments.
+            **kwargs: Standard matplotlib legend keyword arguments.
+        """
         self.ax1.legend(*args, **kwargs)
 
 
 def plot_parallel_coordinates_ci(metrics_data, bounds=None, colors=None, figsize=(8, 5)):
     """ 
+    Constructs a parallel coordinates plot with interval shading to visualize multi-metric performance distributions across different models.
+
     Args:
-        metrics_data (dict): Dictionary structured as:
-            {
-                'MetricName': {
-                    'ModelName': [run1, run2, run3, ...],
-                    ...
-                },
-                ...
-            }
-        bounds (ditc, optional): Sets the bounds on each metric's axis. If None, the bounds are tuned to the specific results.
-        colors (list, optional): List of colors for each model.
-        figsize (tuple, optional): Figure dimensions.
+        metrics_data (dict): Dictionary structured as {'MetricName': {'ModelName': [run1, run2, ...], ...}, ...}.
+        bounds (dict, optional): Sets the min and max bounds on each metric's vertical axis. If None, the bounds are dynamically tuned. Defaults to None.
+        colors (list, optional): List of string or hex colors for each model line and interval fill. Defaults to None.
+        figsize (tuple, optional): Dimensions of the generated figure. Defaults to (8, 5).
     """
 
     metrics = list(metrics_data.keys())

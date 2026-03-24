@@ -10,16 +10,17 @@ from sklearn.isotonic import IsotonicRegression
 ################### DATA ###################
 def partition_states(S, Y, block_size, buffer_size=0):
     """
+    Splits continuous reservoir states and target sequences into discrete, temporally ordered blocks separated by an optionial buffer to mitigate autocorrelation leakage.
 
     Args:
-        S (_type_): _description_
-        Y (_type_): _description_
-        block_size (int, optional): _description_. Defaults to 200.
-        buffer_size (int, optional): _description_. Defaults to 20.
+        S (ndarray): Reservoir state matrix of shape [Time, Reservoir_Dim].
+        Y (ndarray): Target variable matrix of shape [Time, Target_Dim].
+        block_size (int): Temporal length of each extracted continuous block.
+        buffer_size (int, optional): Number of time steps to discard between consecutive blocks to enforce temporal independence. Defaults to 0.
 
     Returns:
-        _type_: _description_
-    """
+        tuple: (S_blocks, Y_blocks) containing lists of partitioned state arrays and target arrays.
+     """
     S_blocks, Y_blocks = [], []
     start_idx = 0
     while start_idx < S.shape[0]: # Add blocks until there is data
@@ -31,15 +32,16 @@ def partition_states(S, Y, block_size, buffer_size=0):
     return S_blocks, Y_blocks
 
 def z_rescale_tensor(X_tensor, mean, std):
-    """_summary_
+    """
+    Reverses the z-score standardization on a PyTorch tensor to restore the original scale of the data using pre-computed empirical moments.
 
     Args:
-        X_tensor (_type_): _description_
-        mean (_type_): _description_
-        std (_type_): _description_
+        X_tensor (torch.Tensor): Standardized tensor to be rescaled.
+        mean (ndarray | float): Empirical mean used during the original standardization.
+        std (ndarray | float): Empirical standard deviation used during the original standardization.
 
     Returns:
-        _type_: _description_
+        torch.Tensor: Scale-restored tensor with dimensions matching X_tensor.
     """
     mean_t = torch.tensor(mean, dtype=X_tensor.dtype)
     std_t = torch.tensor(std, dtype=X_tensor.dtype)
@@ -48,17 +50,15 @@ def z_rescale_tensor(X_tensor, mean, std):
 ################### RC ###################
 def get_reduced_states(Reservoir, X, n_components):
     """
-    Applies dimensionality reduction (PCA) to the reservoir's RNN neurons.
+    Applies principal component analysis (PCA) to compress the dimensionality of the reservoir's internal RNN states.
 
     Args:
-        Reservoir (Class): Methods to operate on the states of the reservoir computer
-        X_train (NumpyArray): shape [T_train, 1]
-        X_test (NumpyArray): [T_test, 1]
-        n_components (int): Number of reduced components 
+        Reservoir (object): Instantiated reservoir computer object containing the get_states method.
+        X (ndarray): Input time-series array used to drive the reservoir dynamics. Shape [Time, Input_Dim].
+        n_components (int): Target number of orthogonal principal components to retain.
 
     Returns:
-        states_train_low (NumpyArray): shape [n_components, R]
-        states_test_low (NumpyArray): shape [n_components, R]
+        ndarray: Dimensionally reduced state matrix of shape [Time, n_components].
     """
     states_high = Reservoir.get_states(X)
 
@@ -76,20 +76,14 @@ def get_reduced_states(Reservoir, X, n_components):
 
 def quantify_tradeoff(metrics_data, baseline_config="Rank 1"):
     """
-    Groups ordered results in terms of mCRPS of a GridSearchCV in a DataFrame. 
-    It shows the difference across all results from the paramters with the best performance to assess how the parameters affect the overall performance of the model.
+    Aggregates grid search metric evaluations and calculates the relative performance degradation against a designated baseline configuration.
 
     Args:
-        metrics_data (dict): {
-            "Rank 1": {"Cal": {}, "Cov": {}, "mCRPS": {}, "Width": {}}
-            "Rank 2": {"Cal": {}, "Cov": {}, "mCRPS": {}, "Width": {}}
-            ...
-            "Rank N": {"Cal": {}, "Cov": {}, "mCRPS": {}, "Width": {}}
-        }
-        baseline_config (str, optional): Defaults to "Rank 1".
+        metrics_data (dict): Nested dictionary mapping metric names ('Cov', 'Cal', 'mCRPS', 'Width') to model configuration ranks to arrays of regional scores.
+        baseline_config (str, optional): The dictionary key representing the baseline model for delta calculations. Defaults to "Rank 1".
 
     Returns:
-        results (DataFrame)
+        pd.DataFrame: Tabular summary of mean metrics per configuration, including delta values for mCRPS and Width.
     """
     metrics = list(metrics_data.keys())
     models = list(metrics_data[metrics[0]].keys())
@@ -110,16 +104,17 @@ def quantify_tradeoff(metrics_data, baseline_config="Rank 1"):
     return results
 
 def evaluate_metrics(y_pred_samples, y_true, cov_prob=0.95, quantiles=None):
-    """_summary_
+    """
+    Computes empirical coverage, mean squared calibration error (MSCE), mean Continuous Ranked Probability Score (mCRPS), and prediction interval width across spatial regions.
 
     Args:
-        y_pred_samples (_type_): _description_
-        y_true (_type_): _description_
-        cov_prob (float, optional): _description_. Defaults to 0.95.
-        quantiles (_type_, optional): _description_. Defaults to None.
+        y_pred_samples (torch.Tensor): Posterior predictive samples of shape [Samples, Time, Regions].
+        y_true (torch.Tensor | ndarray): Ground truth observations of shape [Time, Regions].
+        cov_prob (float, optional): Target probability mass for the central prediction interval. Defaults to 0.95.
+        quantiles (torch.Tensor | ndarray, optional): Target quantile thresholds for calibration evaluation. Accepts a 1D global array or 2D region-specific matrix. Defaults to 19 evenly spaced quantiles.
 
     Returns:
-        _type_: _description_
+        tuple: (cov_per_region, cal_per_region, mcrps_per_region, width_per_region) containing PyTorch tensors of spatial metrics.
     """
     if quantiles is None:
         quantiles = np.linspace(0.05, 0.95, 19)
@@ -127,6 +122,7 @@ def evaluate_metrics(y_pred_samples, y_true, cov_prob=0.95, quantiles=None):
     if not isinstance(y_true, torch.Tensor):    
         y_true = torch.from_numpy(y_true)
 
+    # Adjust PyTorch tensor dims for 1 dimensional datasets
     if y_true.ndim == 1:
         y_true = y_true.unsqueeze(-1)
     if y_pred_samples.ndim == 2:
@@ -156,15 +152,15 @@ def evaluate_metrics(y_pred_samples, y_true, cov_prob=0.95, quantiles=None):
     num_regions = y_true.shape[1]
     cal_per_region = torch.zeros(num_regions, device=y_true.device)
     
-    # Handle both 1D (Global Nominal Quantiles) and 2D (Region-Adjusted Quantiles)
+    # Handle both 1D (Global Quantiles) and 2D (Regional Quantiles)
     if quantiles_t.ndim == 1:
         for q in quantiles_t:
-            # Enforce native float via .item()
-            quantile_vals = torch.quantile(y_pred_samples, q.item(), dim=0)   
+            # Get float value via .item()
+            quantile_vals = torch.quantile(y_pred_samples, q.item(), dim=0)   # Compute quantile across samples for fixed TimeStep
             q_coverage = (y_true <= quantile_vals).float().mean(dim=0)     
-            cal_per_region += (q - q_coverage)**2
+            cal_per_region += (q - q_coverage)**2   # Squared Calibration Error
         
-        # Division MUST be outside the loop to calculate Mean Squared Calibration Error properly
+        # Mean Squared Calibration Error
         cal_per_region /= len(quantiles_t)
         
     elif quantiles_t.ndim == 2:
@@ -174,41 +170,45 @@ def evaluate_metrics(y_pred_samples, y_true, cov_prob=0.95, quantiles=None):
             for i in range(num_quantiles):
                 q = quantiles_t[i, r]
                 # Extract all samples and all time steps for region r
-                quantile_val = torch.quantile(y_pred_samples[:, :, r], q.item(), dim=0)
+                quantile_val = torch.quantile(y_pred_samples[:, :, r], q.item(), dim=0) # Compute quantile across samples for fixed TimeStep, r
                 q_coverage = (y_true[:, r] <= quantile_val).float().mean(dim=0)
-                cal_per_region[r] += (q - q_coverage)**2
+                cal_per_region[r] += (q - q_coverage)**2    # Squared Calibration Error
                 
-        # Division outside the loop
+        # Mean Squared Calibration Error
         cal_per_region /= num_quantiles
 
     # ==========================================
     # Per-Region mCRPS
     # ==========================================
     tau_grid = torch.linspace(0.0, 1.0, 101, dtype=y_pred_samples.dtype, device=y_pred_samples.device)
-    q_mcrps = torch.quantile(y_pred_samples, tau_grid, dim=0)
+    q_mcrps = torch.quantile(y_pred_samples, tau_grid, dim=0)   # Shape: [Quantiles, TimeSteps, Regions]
     
-    y_true_extended = y_true.unsqueeze(0)
+    y_true_extended = y_true.unsqueeze(0)   # Shape: [1, TimeSteps, Regions]
     errors = y_true_extended - q_mcrps  
     
-    tau_grid_extended = tau_grid.view(-1, 1, 1)
-    loss = torch.max(tau_grid_extended * errors, (tau_grid_extended - 1) * errors)
+    tau_grid_extended = tau_grid.view(-1, 1, 1) # Shape: [Quantiles, 1, 1]
+    loss = torch.max(tau_grid_extended * errors, (tau_grid_extended - 1) * errors) # Shape: [Quantiles, TimeSteps, Regions]
     
-    mcrps_per_region = 2 * loss.mean(dim=[0, 1])
+    mcrps_per_region = 2 * loss.mean(dim=[0, 1])    # Shape: [Regions]
 
     # ==========================================
     # Per-Region Width
     # ==========================================
-    width_per_region = (Y_upper - Y_lower).mean(dim=0)
+    width_per_region = (Y_upper - Y_lower).mean(dim=0) # Shape: [Regions,] 
 
     return cov_per_region, cal_per_region, mcrps_per_region, width_per_region
 
 def check_calibration(q, Y, quantiles):
     """
-    Evaluates the calibration error and empirical CDF.
+    Evaluates the empirical Cumulative Distribution Function (CDF) and computes the mean squared calibration error (MSCE) against target nominal quantiles.
+
     Args:
-        q: Quantile matrix of shape [Quantiles, TimeSteps, Regions]
-        Y: Ground truth of shape [TimeSteps, Regions]
-        quantiles: Target quantiles of shape [Quantiles]
+        q (ndarray): Predicted quantile matrix of shape [Quantiles, Time, Regions].
+        Y (ndarray): Ground truth observations of shape [Time, Regions].
+        quantiles (ndarray): Target nominal quantiles of shape [Quantiles].
+
+    Returns:
+        tuple: (cal_error, predicted_cdf) containing the per-region MSCE array and the empirical coverage matrix.
     """
     # Y is broadcasted against q. Resulting mask shape: [Quantiles, TimeSteps, Regions]
     coverage_mask = Y <= q
@@ -223,7 +223,18 @@ def check_calibration(q, Y, quantiles):
 
 def calibrate(y_pred_test, y_pred_val, Y_test, Y_val, quantiles=None, plot_region=0):
     """
-    Fits Isotonic Regression on the validation dataset and maps the test dataset quantiles.
+    Executes Isotonic Regression on validation predictions to map empirical coverage to nominal quantiles, outputting recalibrated quantile boundaries for the test set.
+
+    Args:
+        y_pred_test (ndarray): Uncalibrated predictive samples for the test sequence of shape [Samples, Time, Regions].
+        y_pred_val (ndarray): Uncalibrated predictive samples for the validation sequence of shape [Samples, Time, Regions].
+        Y_test (ndarray): Ground truth test observations of shape [Time, Regions].
+        Y_val (ndarray): Ground truth validation observations of shape [Time, Regions].
+        quantiles (ndarray, optional): Target nominal quantiles for calibration mapping. Defaults to 99 percentiles.
+        plot_region (int | None, optional): Spatial region index to visualize the calibration curve. Set to None to disable plotting. Defaults to 0.
+
+    Returns:
+        tuple: (cal_error_uncal, cal_error_cal, new_quantiles_matrix) containing original MSCE, recalibrated MSCE, and the region-adjusted nominal quantile matrix.
     """
     if quantiles is None:
         quantiles = np.linspace(0.01, 0.99, 99)

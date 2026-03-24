@@ -9,12 +9,15 @@ from utils import evaluate_metrics, calibrate
 
 def pyro_model(S, Y=None, print_shapes=False, target_dim=None, beta_params=[0,10.], scale=10.):
     """
+    Defines the Bayesian generative model for mapping reservoir states to target outputs using Pyro.
+    
     Args:
         S (Tensor/Array): Reservoir states of shape (rows, cols).
-        Y (Tensor/Array, optional): Target of shape (rows, dim) or (rows,).
-        beta_params (list): Normal prior [mean, std].
-        scale (float): HalfNormal prior scale for sigma.
-        target_dim (int, optional): Required if predicting (Y=None) with dim > 1.
+        Y (Tensor/Array, optional): Target of shape (rows, dim) or (rows,). Defaults to None.
+        print_shapes (bool, optional): Toggles dimension logging. Defaults to False.
+        target_dim (int, optional): Required if PREDICT (Y=None) with dim > 1. Defaults to None.
+        beta_params (list, optional): Normal prior parameters [mean, std] for the readout weights. Defaults to [0, 10.].
+        scale (float, optional): HalfNormal prior scale for the observation noise. Defaults to 10.
     """
     if print_shapes: print(f"Tensor S shape: {S.shape}")
 
@@ -27,7 +30,7 @@ def pyro_model(S, Y=None, print_shapes=False, target_dim=None, beta_params=[0,10
             Y = Y.unsqueeze(-1)  # Force shape (rows, 1)
         dim = Y.shape[1]
     else:
-        # CRITICAL: Pass `target_dim` so the model knows what shape of `beta` to sample.
+        # Pass `target_dim` so the model knows what shape of `beta` to sample.
         dim = target_dim if target_dim is not None else 1
 
     if print_shapes and Y is not None: 
@@ -51,7 +54,7 @@ def pyro_model(S, Y=None, print_shapes=False, target_dim=None, beta_params=[0,10
     # (rows, cols) @ (cols, dim) -> (rows, dim)
     mu = torch.matmul(S, beta.mT)
 
-    with pyro.plate("data", size=rows, dim=-1): # Enforce assignment of Target dim to 
+    with pyro.plate("data", size=rows, dim=-1): # Enforce assignment of target dim to last dim 
         while sigma.ndim < mu.ndim:
             sigma = sigma.unsqueeze(-1)
 
@@ -73,13 +76,14 @@ def pyro_model(S, Y=None, print_shapes=False, target_dim=None, beta_params=[0,10
 
 class Reservoir:
     def __init__(self, input_dim: int, reservoir_dim: int, spectral_radius: float, seed=None):
-        """_summary_
+        """
+        Initializes the reservoir computer architecture and scaling parameters.
 
         Args:
-            input_dim (_type_): _description_
-            reservoir_dim (_type_): _description_
-            spectral_radius (_type_): _description_
-            seed (_type_, optional): _description_. Defaults to None.
+            input_dim (int): Dimensionality of the input sequence.
+            reservoir_dim (int): Total number of internal recurrent nodes.
+            spectral_radius (float): Target spectral radius for the internal weight matrix to control echo state dynamics.
+            seed (int, optional): Random seed for weight matrix reproducibility. Defaults to None.
         """
         self.input_dim = input_dim
         self.reservoir_dim = reservoir_dim
@@ -88,7 +92,8 @@ class Reservoir:
         self.w_init()
 
     def w_init( self ):
-        """_summary_
+        """
+        Initializes and scales the input and internal weight matrices (W_in, W) to satisfy the Echo State Property.
         """
         if self.seed is not None:
             np.random.seed(self.seed)
@@ -100,13 +105,14 @@ class Reservoir:
         self.W_in = np.random.uniform( -1, 1, (self.reservoir_dim, self.input_dim) )
 
     def get_states(self, X):
-        """_summary_
+        """
+        Drives the reservoir with an input signal to compute the continuous internal state evolution.
 
         Args:
-            X (_type_): _description_
+            X (ndarray): Input time-series matrix of shape [Time_steps, input_dim].
 
         Returns:
-            _type_: _description_
+            ndarray: Matrix of temporal reservoir states of shape [Time_steps, reservoir_dim].
         """
         Time_steps = X.shape[0]
         states = np.zeros( (Time_steps, self.reservoir_dim) )
@@ -121,20 +127,20 @@ class Reservoir:
 
         return states
 
-import torch
-import pyro
-import numpy as np
-from sklearn.base import BaseEstimator, RegressorMixin
-from sklearn.decomposition import PCA
-from methods import pyro_model, Reservoir
-from utils import evaluate_metrics, calibrate
-
 class BayesianStateMCMC(BaseEstimator, RegressorMixin):
-    """
-    Streamlined MCMC Estimator designed to ingest pre-computed, synchronized Reservoir States.
-    """
     def __init__(self, beta_params=(0, 1.0), scale=1.0, n_components=64, 
                  num_samples=200, warmup_steps=200, seed=42):
+        """
+        Streamlined MCMC Estimator designed to ingest pre-computed, synchronized Reservoir States.
+
+        Args:
+            beta_params (tuple, optional): Normal prior parameters (mean, std) for the readout  weights. Defaults to (0, 1.0).
+            scale (float, optional): HalfNormal prior scale for observation noise. Defaults to 1.0.
+            n_components (int, optional): Target dimensionality for PCA reduction of reservoir states. Defaults to 64.
+            num_samples (int, optional): Number of posterior samples generated by the MCMC sampler. Defaults to 200.
+            warmup_steps (int, optional): Number of initial burn-in steps for NUTS adaptation. Defaults to 200.
+            seed (int, optional): Random seed for inference reproducibility. Defaults to 42.
+        """
         self.beta_params = beta_params
         self.scale = scale
         self.n_components = n_components
@@ -143,6 +149,16 @@ class BayesianStateMCMC(BaseEstimator, RegressorMixin):
         self.seed = seed
 
     def fit(self, S_blocks, y_blocks):
+        """
+        Applies PCA reduction to synchronized states and executes MCMC inference to extract the parameter posterior density.
+
+        Args:
+            S_blocks (list of ndarray): List of independent, valid temporal state blocks.
+            y_blocks (list of ndarray): List of independent, valid temporal target blocks.
+
+        Returns:
+            self: Fitted estimator instance containing the posterior distributions.
+        """
         # Stack blocks for continuous PCA and training
         S_train = np.vstack(S_blocks)
         y_train = np.vstack(y_blocks)
@@ -173,6 +189,15 @@ class BayesianStateMCMC(BaseEstimator, RegressorMixin):
         return self
 
     def predict(self, S_blocks):
+        """
+        Generates probabilistic forecasts by sampling the predictive posterior distribution using dimension-reduced test states.
+
+        Args:
+            S_blocks (list of ndarray): List of valid temporal test state blocks.
+
+        Returns:
+            ndarray: Mean point estimate of the predictive distribution of shape [Total_Time, Target_Dim].
+        """
         S_test = np.vstack(S_blocks)
         S_test_PCA = self.pca_.transform(S_test)
         S_tensor = torch.tensor(S_test_PCA, dtype=torch.float64)
@@ -196,17 +221,17 @@ class BayesianStateMCMC(BaseEstimator, RegressorMixin):
 class DataGenerator:
     def __init__(self, Time_steps, tau, n=10, beta=0.2, gamma=0.1, delta_t=0.1, init_steps=500 , under_samp=10):
         """
-        Method to generates a caothic time-series using the Mackay-Glass Equation according to Eq.(9) in https://doi.org/10.1016/j.mlwa.2022.100300
+        Method to generate a chaotic time-series using the Mackey-Glass Equation according to Eq.(9) in https://doi.org/10.1016/j.mlwa.2022.100300.
 
         Args:
-            Time_steps (int): The length of the time-series
-            tau (float): Delay parameter (caothic behavior for tau >= 17)
-            n (int, optional): Constant parameter. Defaults to 10.
+            Time_steps (int): The length of the target time-series.
+            tau (float): Delay parameter (chaotic behavior emerges for tau >= 17).
+            n (int, optional): Constant nonlinearity parameter. Defaults to 10.
             beta (float, optional): Constant parameter. Defaults to 0.2.
             gamma (float, optional): Constant parameter. Defaults to 0.1.
-            delta_t (float, optional): integration step size
-            init_steps (int, optional): Excluded steps for caothic behavior to emerge (heuristic). Defaults to 500.
-            under_samp (int, optional): Undersampling to increase variability (heuristic). Defaults to 10.
+            delta_t (float, optional): Integration step size. Defaults to 0.1.
+            init_steps (int, optional): Excluded transient steps for chaotic behavior stabilization. Defaults to 500.
+            under_samp (int, optional): Undersampling factor to increase temporal variability. Defaults to 10.
         """
         self.Time_steps = Time_steps*under_samp
         self.under_samp = under_samp
@@ -219,11 +244,10 @@ class DataGenerator:
 
     def generate_data(self):
         """
-        It generates the time-series
+        Executes numerical integration to generate the continuous time-series arrays.
 
         Returns:
-            X [Time_steps, 1]: Input time-series
-            Y [Time_steps, 1]: Output time-series
+            tuple: (X, Y) where X is the input sequence of shape [Time_steps, 1] and Y is the target sequence of shape [Time_steps, 1].
         """
         delay_steps = int(self.tau / self.delta_t)
         total_steps = self.Time_steps + delay_steps + self.init_steps + 1
