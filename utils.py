@@ -8,17 +8,39 @@ from sklearn.decomposition import PCA
 from sklearn.isotonic import IsotonicRegression
 
 ################### DATA ###################
-def partition_states(S, Y, block_size=200, buffer_size=20):
+def partition_states(S, Y, block_size=200, buffer_size=0):
+    """_summary_
+
+    Args:
+        S (_type_): _description_
+        Y (_type_): _description_
+        block_size (int, optional): _description_. Defaults to 200.
+        buffer_size (int, optional): _description_. Defaults to 20.
+
+    Returns:
+        _type_: _description_
+    """
     S_blocks, Y_blocks = [], []
     start_idx = 0
-    while start_idx + block_size <= S.shape[0]:
-        end_idx = start_idx + block_size
+    while start_idx < S.shape[0]: # Add blocks until there is data
+        if start_idx + block_size <= S.shape[0]: end_idx = start_idx + block_size
+        else: end_idx = S.shape[0]
         S_blocks.append(S[start_idx:end_idx])
         Y_blocks.append(Y[start_idx:end_idx])
         start_idx = end_idx + buffer_size
     return S_blocks, Y_blocks
 
 def z_rescale_tensor(X_tensor, mean, std):
+    """_summary_
+
+    Args:
+        X_tensor (_type_): _description_
+        mean (_type_): _description_
+        std (_type_): _description_
+
+    Returns:
+        _type_: _description_
+    """
     mean_t = torch.tensor(mean, dtype=X_tensor.dtype)
     std_t = torch.tensor(std, dtype=X_tensor.dtype)
     return (X_tensor * std_t) + mean_t
@@ -88,6 +110,17 @@ def quantify_tradeoff(metrics_data, baseline_config="Rank 1"):
     return results
 
 def evaluate_metrics(y_pred_samples, y_true, cov_prob=0.95, quantiles=None):
+    """_summary_
+
+    Args:
+        y_pred_samples (_type_): _description_
+        y_true (_type_): _description_
+        cov_prob (float, optional): _description_. Defaults to 0.95.
+        quantiles (_type_, optional): _description_. Defaults to None.
+
+    Returns:
+        _type_: _description_
+    """
     if quantiles is None:
         quantiles = np.linspace(0.05, 0.95, 19)
 
