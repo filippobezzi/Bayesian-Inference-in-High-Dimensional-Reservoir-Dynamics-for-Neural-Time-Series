@@ -40,36 +40,61 @@ class BayesianModel(PyroModule):
             .to_event(1),
         )
         with pyro.plate("data", mu.shape[0]):
-            obs = pyro.sample("obs", dist.Normal(mu, sigma**2).to_event(1), obs=y)
+            obs = pyro.sample("obs", dist.Normal(mu, sigma).to_event(1), obs=y)
         return mu
 
 
 class SSVS(PyroModule):
-    def __init__(self, in_features: int):
+    def __init__(self, in_features: int, out_features: int) -> None:
+        super().__init__()
         self.in_features = in_features
+        self.out_features = out_features
         return
 
     def forward(self, x: torch.Tensor, y: torch.Tensor | None = None) -> torch.Tensor:
-        # Global shrinkage
-        tau = pyro.sample("tau", dist.HalfCauchy(1.0))  # (1,)
-        # Local shrinkage
+        device = x.device
+
+        # 1. Global shrinkage (Scalar)
+        tau = pyro.sample("tau", dist.HalfCauchy(torch.tensor(1.0, device=device)))
+
+        # 2. Local shrinkage & Regression coefficients
         with pyro.plate("features_plate", self.in_features):
-            lambdas = pyro.sample("lambdas", dist.HalfCauchy(1.0))  # (1,)
-            # Regression coefficients with SSVS prior
+            # Using .to_event(1) expands the sample into shape [in_features, out_features]
+            lambdas = pyro.sample(
+                "lambdas",
+                dist.HalfCauchy(torch.tensor(1.0, device=device))
+                .expand([self.out_features])
+                .to_event(1),
+            )
+
+            # beta shape: [in_features, out_features]
             beta = pyro.sample(
-                "beta", dist.Normal(0.0, lambdas**2 * tau**2)
-            )  # (in_features,)
+                "beta",
+                dist.Normal(
+                    torch.tensor(0.0, device=device),
+                    lambdas * tau,
+                ).to_event(1),
+            )
 
-        # bias = pyro.sample("bias", dist.Normal(0.0, 10.0))  # (1,)
-        sigma = pyro.sample("sigma", dist.Uniform(0.0, 10.0))  # (1,)
+        # 3. Noise standard deviation per region: shape [out_features]
+        sigma = pyro.sample(
+            "sigma",
+            dist.Uniform(
+                torch.tensor(0.0, device=device),
+                torch.tensor(10.0, device=device),
+            )
+            .expand([self.out_features])
+            .to_event(1),
+        )
 
-        mu = torch.matmul(x, beta)  # + bias  # (1,)
+        # Matrix multiplication: [Batch, in_features] @ [in_features, out_features] -> [Batch, out_features]
+        mu = torch.matmul(x, beta)
 
-        if y is not None:
-            y = y.squeeze(-1)
+        # 4. Likelihood
+        with pyro.plate("data_plate", x.shape[0]):
+            # .to_event(1) tells Pyro these 119 targets belong to the same multi-dimensional observation
+            obs = pyro.sample("obs", dist.Normal(mu, sigma).to_event(1), obs=y)
 
-        with pyro.plate("data_plate", mu.shape[0]):
-            obs = pyro.sample("obs", dist.Normal(mu, sigma**2), obs=y)  # (num_samples,)
         return mu
 
 
@@ -102,7 +127,6 @@ class BayesianNeuralNetwork(PyroModule):
         activation: Callable[[torch.Tensor], torch.Tensor],
         sigma_bias: float = 1.0,
         sigma_weight: float = 1.0,
-        device: torch.device | str = "cpu",
     ):
         """
         Args:
@@ -122,24 +146,31 @@ class BayesianNeuralNetwork(PyroModule):
 
         super().__init__()
 
-        self.device = device
+        self.layer_sizes = layer_sizes
         self.activation = activation
+        self.sigma_bias = sigma_bias
+        self.sigma_weight = sigma_weight
+        self.layers: PyroModule | None = None
+        return
 
+    def _init_layers(self, device: torch.device) -> None:
         # initialize all the layers with their respective sizes
         layer_list = [
-            PyroModule[nn.Linear](layer_sizes[i], layer_sizes[i + 1]).to(self.device)
-            for i in range(len(layer_sizes) - 1)
+            PyroModule[nn.Linear](self.layer_sizes[i], self.layer_sizes[i + 1]).to(
+                device
+            )
+            for i in range(len(self.layer_sizes) - 1)
         ]
-        self.layers = PyroModule[nn.ModuleList](layer_list).to(self.device)
+        self.layers = PyroModule[nn.ModuleList](layer_list).to(device)
 
         # initialize all the prior distributions on the layers
         for i, layer in enumerate(self.layers):
-            input_dim = layer_sizes[i]
-            output_dim = layer_sizes[i + 1]
+            input_dim = self.layer_sizes[i]
+            output_dim = self.layer_sizes[i + 1]
             layer.weight = PyroSample(
                 dist.Normal(
-                    torch.tensor(0.0, device=self.device),
-                    torch.tensor(sigma_weight**2 / input_dim, device=self.device),
+                    torch.tensor(0.0, device=device),
+                    torch.tensor(self.sigma_weight / input_dim, device=device),
                 )
                 .expand([output_dim, input_dim])
                 .to_event(2)
@@ -147,28 +178,30 @@ class BayesianNeuralNetwork(PyroModule):
 
             layer.bias = PyroSample(
                 dist.Normal(
-                    torch.tensor(0.0, device=self.device),
-                    torch.tensor(sigma_bias**2, device=self.device),
+                    torch.tensor(0.0, device=device),
+                    torch.tensor(self.sigma_bias, device=device),
                 )
                 .expand([output_dim])
                 .to_event(1)
             )
-
         return
 
-    def forward(self, x: torch.Tensor, y: torch.Tensor | None = None):
+    def forward(self, x: torch.Tensor, y: torch.Tensor | None = None) -> torch.Tensor:
+        device = x.device
+        if self.layers is None:
+            self._init_layers(device)
+
         for layer in self.layers[:-1]:
             x = self.activation(layer(x))
         mu = self.layers[-1](x)  # [n_samples, n_features]
 
         sigma = pyro.sample(
             "sigma",
-            # dist.Gamma(1, 1).expand([mu.shape[1]]).to_event(1),  # 1
-            dist.HalfNormal(torch.tensor(1.0, device=self.device))
+            dist.HalfNormal(torch.tensor(1.0, device=device))
             .expand([mu.shape[1]])
             .to_event(1),
         )  # [n_features]
         with pyro.plate("data", mu.shape[0]):
-            obs = pyro.sample("obs", dist.Normal(mu, sigma**2).to_event(1), obs=y)
+            obs = pyro.sample("obs", dist.Normal(mu, sigma).to_event(1), obs=y)
 
         return mu
