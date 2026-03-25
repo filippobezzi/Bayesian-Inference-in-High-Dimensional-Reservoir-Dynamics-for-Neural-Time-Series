@@ -1,10 +1,11 @@
+from math import sqrt
+from typing import Callable
+
 import pyro
 import pyro.distributions as dist
 import torch
 import torch.nn as nn
-
 from pyro.nn import PyroModule, PyroSample
-from typing import Callable
 
 
 class BayesianModel(PyroModule):
@@ -156,12 +157,10 @@ class BayesianNeuralNetwork(PyroModule):
     def _init_layers(self, device: torch.device) -> None:
         # initialize all the layers with their respective sizes
         layer_list = [
-            PyroModule[nn.Linear](self.layer_sizes[i], self.layer_sizes[i + 1]).to(
-                device
-            )
+            PyroModule[nn.Linear](self.layer_sizes[i], self.layer_sizes[i + 1])
             for i in range(len(self.layer_sizes) - 1)
         ]
-        self.layers = PyroModule[nn.ModuleList](layer_list).to(device)
+        self.layers = PyroModule[nn.ModuleList](layer_list)
 
         # initialize all the prior distributions on the layers
         for i, layer in enumerate(self.layers):
@@ -170,7 +169,7 @@ class BayesianNeuralNetwork(PyroModule):
             layer.weight = PyroSample(
                 dist.Normal(
                     torch.tensor(0.0, device=device),
-                    torch.tensor(self.sigma_weight / input_dim, device=device),
+                    torch.tensor(self.sigma_weight / sqrt(input_dim), device=device),
                 )
                 .expand([output_dim, input_dim])
                 .to_event(2)
