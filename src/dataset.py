@@ -15,10 +15,11 @@ class ESNDataset(Dataset):
         x: torch.Tensor,
         mu: torch.Tensor,
         std: torch.Tensor,
+        device: torch.device = torch.device("cpu"),
     ) -> None:
-        self.states = states
-        self.x = x
-        self.mean = mu
+        self.states = states.to(device)
+        self.x = x.to(device)
+        self.mu = mu
         self.std = std
         return
 
@@ -27,6 +28,11 @@ class ESNDataset(Dataset):
 
     def __getitem__(self, index):
         return self.states[index], self.x[index]
+
+    def to(self, device: torch.device):
+        return ESNDataset(
+            states=self.states, x=self.x, mu=self.mu, std=self.std, device=device
+        )
 
 
 def construct_dataset(
@@ -141,10 +147,12 @@ def partition_dataset(
     for ds in dataset_list:
         step = len(ds) // num_partitions
         start_step = 0
-        for i in range(num_partitions):
+        for i in range(num_partitions - 1):
             indices = np.arange(start_step, start_step + step)
             batches.append(Subset(ds, indices))
             start_step += step
+        indices = np.arange(start_step, ds.states.shape[0])
+        batches.append(Subset(ds, indices))
 
     n_total = len(batches)
     all_indices = np.arange(n_total)
@@ -164,11 +172,9 @@ def partition_dataset(
         selected_batches = [batches[i] for i in indices_list]
 
         all_states = torch.cat([b.dataset.states[b.indices] for b in selected_batches])
-        all_preds = torch.cat(
-            [b.dataset.predictions[b.indices] for b in selected_batches]
-        )
+        all_preds = torch.cat([b.dataset.x[b.indices] for b in selected_batches])
 
-        mu_val = dataset_list[0].mean
+        mu_val = dataset_list[0].mu
         std_val = dataset_list[0].std
 
         return ESNDataset(all_states, all_preds, mu_val, std_val)
