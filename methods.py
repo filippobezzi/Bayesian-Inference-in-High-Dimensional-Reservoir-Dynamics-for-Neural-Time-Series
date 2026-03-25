@@ -266,8 +266,8 @@ class DataGenerator:
         skip_steps = delay_steps+self.init_steps+1
 
         X = x_history[skip_steps:-1][::self.under_samp]
-        # X = (X - np.mean(X)) / ( np.std(X) + 1e-8 )
+        X = (X - np.mean(X)) / ( np.std(X) + 1e-8 )
         Y = x_history[skip_steps+1:][::self.under_samp]
-        # Y = (Y - np.mean(Y)) / ( np.std(Y) + 1e-8 )
+        Y = (Y - np.mean(Y)) / ( np.std(Y) + 1e-8 )
 
-        return X.reshape((-1, 1)), Y.reshape((-1, 1))
+        return torch.tensor(X.reshape((-1, 1))), torch.tensor(Y.reshape((-1, 1)))

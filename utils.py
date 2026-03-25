@@ -191,10 +191,16 @@ def evaluate_metrics(y_pred_samples, y_true, cov_prob=0.95, quantiles=None):
     
     mcrps_per_region = 2 * loss.mean(dim=[0, 1])    # Shape: [Regions]
 
+    ranges = y_true.max(dim=0).values - y_true.min(dim=0).values
+
+    mcrps_per_region /= ranges  # Shape: [Regions]
+
     # ==========================================
     # Per-Region Width
     # ==========================================
     width_per_region = (Y_upper - Y_lower).mean(dim=0) # Shape: [Regions,] 
+
+    width_per_region /= ranges
 
     return cov_per_region, cal_per_region, mcrps_per_region, width_per_region
 
