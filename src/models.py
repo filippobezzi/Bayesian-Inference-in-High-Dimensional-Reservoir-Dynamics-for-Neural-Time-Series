@@ -13,30 +13,39 @@ class BayesianModel(PyroModule):
         self,
         in_features: int,
         out_features: int,
+        sigma_bias: float = 10.0,
         sigma_R: float = 1.0,
         scale: float = 0.1,
     ) -> None:
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
+        self.sigma_bias = sigma_bias
         self.sigma_R = sigma_R
         self.scale = scale
         return
 
     def forward(self, x: torch.Tensor, y: torch.Tensor | None = None) -> torch.Tensor:
+        device = x.device
         R = pyro.sample(
             "R",
             dist.Normal(
-                torch.tensor(0.0, device=x.device),
-                torch.tensor(self.sigma_R**2 / self.in_features, device=x.device),
+                torch.tensor(0.0, device=device),
+                torch.tensor(self.sigma_R, device=device),
             )
             .expand([self.in_features, self.out_features])
             .to_event(2),
         )
-        mu = torch.matmul(x, R)
+        bias = pyro.sample(
+            "bias",
+            dist.HalfNormal(torch.tensor(self.sigma_bias, device=device))
+            .expand([self.out_features])
+            .to_event(1),
+        )
+        mu = torch.matmul(x, R) + bias
         sigma = pyro.sample(
             "sigma",
-            dist.HalfNormal(torch.tensor(self.scale, device=x.device))
+            dist.HalfNormal(torch.tensor(self.scale, device=device))
             .expand([self.out_features])
             .to_event(1),
         )

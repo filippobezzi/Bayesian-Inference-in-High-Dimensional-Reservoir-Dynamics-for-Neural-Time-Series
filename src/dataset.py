@@ -13,8 +13,8 @@ class ESNDataset(Dataset):
         self,
         states: torch.Tensor,
         x: torch.Tensor,
-        mu: torch.Tensor,
-        std: torch.Tensor,
+        mu: torch.Tensor | None = None,
+        std: torch.Tensor | None = None,
         device: torch.device = torch.device("cpu"),
     ) -> None:
         self.states = states.to(device)
@@ -33,6 +33,48 @@ class ESNDataset(Dataset):
         return ESNDataset(
             states=self.states, x=self.x, mu=self.mu, std=self.std, device=device
         )
+
+
+class DataGenerator:
+    def __init__(
+        self,
+        time_steps: int,
+        tau: int,
+        n: int,
+        beta: float,
+        gamma: float,
+        delta_t: float,
+    ) -> None:
+        self.time_steps = time_steps
+        self.beta = beta
+        self.gamma = gamma
+        self.delta_t = delta_t
+        self.tau = tau
+        self.n = n
+        return
+
+    def generate_data(self) -> tuple[torch.Tensor, torch.Tensor]:
+        delay_steps = int(self.tau / self.delta_t)
+        total_steps = self.time_steps + delay_steps + 1
+        x_history = np.zeros(total_steps + 1)
+        x_history[:delay_steps] = 1.2 + np.random.uniform(-0.1, 0.1, delay_steps)
+
+        for t in range(delay_steps, total_steps, 1):
+            x_past = x_history[t - delay_steps]
+            x_curr = x_history[t]
+
+            x_succ = (
+                x_curr
+                + (self.beta * x_past / (1 + x_past**self.n) - self.gamma * x_curr)
+                * self.delta_t
+            )
+
+            x_history[t + 1] = x_succ
+        X = x_history[delay_steps + 1 : -1]
+        X = (X - np.mean(X)) / np.std(X)
+        Y = x_history[delay_steps + 2 :]
+        Y = (Y - np.mean(Y)) / np.std(Y)
+        return torch.tensor(X.reshape((-1, 1))), torch.tensor(Y.reshape((-1, 1)))
 
 
 def construct_dataset(
@@ -101,20 +143,9 @@ def construct_dataset(
     return train_data, test_data
 
 
-@dataclass
-class DataSet:
-    states: torch.Tensor
-    x: torch.Tensor
-
-    def to(self, device: torch.device) -> None:
-        self.states = self.states.to(device)
-        self.x = self.x.to(device)
-        return
-
-
 def partition_dataset(
     dataset_list: list[ESNDataset],
-    num_partitions: int = 5,
+    num_partitions: int = 10,
     training_frac: float = 0.8,
     cal_frac: float = 0.1,
     test_frac: float = 0.1,
